@@ -4,7 +4,7 @@ Donate link: https://freelancermartin.com/et
 Tags: woocommerce, merit aktiva, invoicing, accounting, estonia
 Requires at least: 6.7
 Tested up to: 7.0
-Stable tag: 1.2.1
+Stable tag: 1.2.2
 Requires PHP: 8.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -87,6 +87,9 @@ Orders are synchronized automatically every 5 minutes. For manual sync:
 * Single order: WooCommerce → Orders → open order → "Send invoice to Merit Aktiva"
 
 == Changelog ==
+
+= 1.2.2 =
+* Fix: invoice amount mismatch error resolved by sending Merit API RoundingAmount field — corrects 0.01–0.02 floating-point rounding differences between WooCommerce order total and sum of individual line items
 
 = 1.2.1 =
 * Fix: myplugin/ field prefix renamed to merit-aktiva/ with automatic database migration
