@@ -398,6 +398,10 @@ class Merit_AktivaAPI_Create_Invoice {
         $reg_no = $order->get_meta('merit-aktiva/registration_number') ?: null;
         $vat_no = $order->get_meta('merit-aktiva/kmkr_number') ?: 0;
 
+        $invoice_rows    = $this->create_invoice_items_array($order);
+        $order_total     = (float) $order->get_total();
+        $rounding_amount = $this->calculate_rounding_amount($invoice_rows, $order_total);
+
         if ( $is_company ) {
             $json_payload = array(
                 "Customer" => array(
@@ -417,16 +421,17 @@ class Merit_AktivaAPI_Create_Invoice {
                     "PhoneNo"         => $order->get_billing_phone(),
                     "Email"           => $order->get_billing_email(),
                 ),
-                "DocDate"       => $order->get_date_created()->date("YmdGis"),
-                "DueDate"       => date("YmdGis", strtotime("+" . intval($this->payment_deadline) . " days")),
-                "InvoiceNo"     => $this->invoice_prefix . $order->get_id(),
-                "RefNo"         => merit_aktiva_make_refno( $order->get_id() ),
-                "ContactName"   => $this->contact_person,
-                "PaymentMethod" => $this->get_payment_method_code($order),
-                "HComment"      => $this->invoice_header_comment,
-                "InvoiceRow" => $this->create_invoice_items_array($order),
-                "TotalAmount" => $order->get_total(),
-                "TaxAmount"  => [["TaxId" => $this->tax_field, "Amount" => 0]],
+                "DocDate"        => $order->get_date_created()->date("YmdGis"),
+                "DueDate"        => date("YmdGis", strtotime("+" . intval($this->payment_deadline) . " days")),
+                "InvoiceNo"      => $this->invoice_prefix . $order->get_id(),
+                "RefNo"          => merit_aktiva_make_refno( $order->get_id() ),
+                "ContactName"    => $this->contact_person,
+                "PaymentMethod"  => $this->get_payment_method_code($order),
+                "HComment"       => $this->invoice_header_comment,
+                "InvoiceRow"     => $invoice_rows,
+                "TotalAmount"    => $order_total,
+                "RoundingAmount" => $rounding_amount,
+                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
             );
         } else {
             $json_payload = array(
@@ -447,16 +452,17 @@ class Merit_AktivaAPI_Create_Invoice {
                     "PhoneNo"         => $order->get_billing_phone(),
                     "Email"           => $order->get_billing_email(),
                 ),
-                "DocDate"       => $order->get_date_created()->date("YmdGis"),
-                "DueDate"       => date("YmdGis", strtotime("+" . intval($this->payment_deadline) . " days")),
-                "InvoiceNo"     => $this->invoice_prefix . $order->get_id(),
-                "RefNo"         => merit_aktiva_make_refno( $order->get_id() ),
-                "ContactName"   => $this->contact_person,
-                "PaymentMethod" => $this->get_payment_method_code($order),
-                "HComment"      => $this->invoice_header_comment,
-                "InvoiceRow" => $this->create_invoice_items_array($order),
-                "TotalAmount" => $order->get_total(),
-                "TaxAmount"  => [["TaxId" => $this->tax_field, "Amount" => 0]],
+                "DocDate"        => $order->get_date_created()->date("YmdGis"),
+                "DueDate"        => date("YmdGis", strtotime("+" . intval($this->payment_deadline) . " days")),
+                "InvoiceNo"      => $this->invoice_prefix . $order->get_id(),
+                "RefNo"          => merit_aktiva_make_refno( $order->get_id() ),
+                "ContactName"    => $this->contact_person,
+                "PaymentMethod"  => $this->get_payment_method_code($order),
+                "HComment"       => $this->invoice_header_comment,
+                "InvoiceRow"     => $invoice_rows,
+                "TotalAmount"    => $order_total,
+                "RoundingAmount" => $rounding_amount,
+                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
             );
         }
 
@@ -507,6 +513,18 @@ class Merit_AktivaAPI_Create_Invoice {
         $this->log_sync_event($order_id, true, 'Arve saadetud');
 
         return ['success' => true, 'message' => 'Arve saadetud', 'order_id' => $order_id];
+    }
+
+    /**
+     * Arvutab ümarduserinevuse WooCommerce'i kogusumma ja ridade ümardatud summa vahel.
+     * Merit API RoundingAmount väli võtab vahe (Decimal 18.2) — korrigeerib 1–2 sendise ujukoma vea.
+     */
+    private function calculate_rounding_amount( array $rows, float $order_total ): float {
+        $rows_total = 0.0;
+        foreach ( $rows as $row ) {
+            $rows_total += round( (float) $row['Price'] * (float) $row['Quantity'], 2 );
+        }
+        return round( $order_total - $rows_total, 2 );
     }
 
     /**
@@ -655,6 +673,10 @@ class Merit_AktivaAPI_Create_Invoice {
             ? $company_name
             : trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
 
+        $credit_rows     = $this->create_credit_items_array($order);
+        $credit_total    = -(float) $order->get_total();
+        $rounding_amount = $this->calculate_rounding_amount($credit_rows, $credit_total);
+
         $json_payload = array(
             "Customer" => array(
                 "Name"            => $customer_name,
@@ -673,15 +695,16 @@ class Merit_AktivaAPI_Create_Invoice {
                 "PhoneNo"         => $order->get_billing_phone(),
                 "Email"           => $order->get_billing_email(),
             ),
-            "DocDate"       => date("YmdGis"),
-            "DueDate"       => date("YmdGis"),
-            "InvoiceNo"     => 'K' . $this->invoice_prefix . $order->get_id(),
-            "RefNo"         => merit_aktiva_make_refno( $order->get_id() ),
-            "ContactName"   => $this->contact_person,
-            "HComment"      => 'Krediitarve tellimusele #' . $order->get_id(),
-            "InvoiceRow"    => $this->create_credit_items_array($order),
-            "TotalAmount"   => -$order->get_total(),
-            "TaxAmount"     => [["TaxId" => $this->tax_field, "Amount" => 0]],
+            "DocDate"        => date("YmdGis"),
+            "DueDate"        => date("YmdGis"),
+            "InvoiceNo"      => 'K' . $this->invoice_prefix . $order->get_id(),
+            "RefNo"          => merit_aktiva_make_refno( $order->get_id() ),
+            "ContactName"    => $this->contact_person,
+            "HComment"       => 'Krediitarve tellimusele #' . $order->get_id(),
+            "InvoiceRow"     => $credit_rows,
+            "TotalAmount"    => $credit_total,
+            "RoundingAmount" => $rounding_amount,
+            "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
         );
 
         $json_body   = json_encode($json_payload);
