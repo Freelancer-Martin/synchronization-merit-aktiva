@@ -16,7 +16,7 @@
  * Plugin Name:       Orders Synchronization for Merit Aktiva
  * Plugin URI:        https://freelancermartin.com/et
  * Description:       Wordpressi pistikprogramm e-poe omanikele Merit Aktiva ja Woocommerce andmete sünkroniseerimiseks.
- * Version:           1.2.2
+ * Version:           1.2.3
  * Author:            freelancermartin
  * Author URI:        https://freelancermartin.com/et
  * License:           GPL-2.0+
