@@ -517,12 +517,15 @@ class Merit_AktivaAPI_Create_Invoice {
 
     /**
      * Arvutab ümarduserinevuse WooCommerce'i kogusumma ja ridade ümardatud summa vahel.
-     * Merit API RoundingAmount väli võtab vahe (Decimal 18.2) — korrigeerib 1–2 sendise ujukoma vea.
+     * $rows_total peab sisaldama ka ridade käibemaksu (TaxAmount), et võrdlus
+     * $order_total-iga (brutosumma koos KM-iga) oleks õige.
      */
     private function calculate_rounding_amount( array $rows, float $order_total ): float {
         $rows_total = 0.0;
         foreach ( $rows as $row ) {
-            $rows_total += round( (float) $row['Price'] * (float) $row['Quantity'], 2 );
+            $row_sum = round( (float) $row['Price'] * (float) $row['Quantity'], 2 );
+            $row_tax = isset( $row['TaxAmount'] ) ? (float) $row['TaxAmount'] : 0.0;
+            $rows_total += ( $row_sum + $row_tax );
         }
         return round( $order_total - $rows_total, 2 );
     }
@@ -555,6 +558,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 "DiscountAmount" => 0,
                 "TaxId"          => $this->tax_field,
                 "LocationCode"   => "1",
+                "TaxAmount"      => (float) $item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) {
                 $row['AccountCode'] = $this->income_account;
@@ -581,6 +585,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
                 'LocationCode'   => '1',
+                'TaxAmount'      => (float) $shipping_item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) {
                 $shipping_row['AccountCode'] = $this->income_account;
@@ -605,6 +610,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
                 'LocationCode'   => '1',
+                'TaxAmount'      => -(float) $order->get_discount_tax(),
             );
             if ( !empty($this->income_account) ) {
                 $discount_row['AccountCode'] = $this->income_account;
@@ -762,6 +768,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
                 'LocationCode'   => '1',
+                'TaxAmount'      => -(float) $item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
             $rows[] = $row;
@@ -782,6 +789,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
                 'LocationCode'   => '1',
+                'TaxAmount'      => -(float) $shipping_item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
             $rows[] = $row;
