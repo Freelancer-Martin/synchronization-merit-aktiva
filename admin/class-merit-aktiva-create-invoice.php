@@ -540,9 +540,13 @@ class Merit_AktivaAPI_Create_Invoice {
         $payload_arrays = [];
 
         foreach ( $order->get_items() as $item_id => $item ) {
-            $product = $item->get_product();
+            $product  = $item->get_product();
             // Merit API lubab kaubakoodi max 20 tähemärki — pikemad SKU-d lõigatakse
-            $sku     = $product ? substr($product->get_sku(), 0, 20) : '';
+            $sku      = $product ? substr( $product->get_sku(), 0, 20 ) : '';
+            $qty      = max( 1, (int) $item->get_quantity() );
+            // get_subtotal() on alati KM-ita ühikuhind tellimuselt — õige ka siis kui
+            // toote kataloogihind sisaldab KM-i (WooCommerce "prices include tax" seade)
+            $unit_price = round( (float) $item->get_subtotal() / $qty, 4 );
 
             $row = array(
                 "Item" => array(
@@ -551,8 +555,8 @@ class Merit_AktivaAPI_Create_Invoice {
                     "Type"        => 1,
                     "UOMName"     => $this->default_unit ?: 'tk',
                 ),
-                "Quantity"       => $item->get_quantity(),
-                "Price"          => $product->get_price(),
+                "Quantity"       => $qty,
+                "Price"          => $unit_price,
                 "DiscountPct"    => 0,
                 "DiscountAmount" => 0,
                 "TaxId"          => $this->tax_field,
