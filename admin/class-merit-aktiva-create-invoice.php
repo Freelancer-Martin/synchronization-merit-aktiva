@@ -399,8 +399,9 @@ class Merit_AktivaAPI_Create_Invoice {
         $vat_no = $order->get_meta('merit-aktiva/kmkr_number') ?: 0;
 
         $invoice_rows    = $this->create_invoice_items_array($order);
-        $order_total     = (float) $order->get_total();
-        $rounding_amount = $this->calculate_rounding_amount($invoice_rows, $order_total);
+        $order_total_tax = round( (float) $order->get_total_tax(), 2 );
+        $order_total_net = round( (float) $order->get_total() - $order_total_tax, 2 );
+        $rounding_amount = $this->calculate_rounding_amount($invoice_rows, $order_total_net);
 
         if ( $is_company ) {
             $json_payload = array(
@@ -429,9 +430,9 @@ class Merit_AktivaAPI_Create_Invoice {
                 "PaymentMethod"  => $this->get_payment_method_code($order),
                 "HComment"       => $this->invoice_header_comment,
                 "InvoiceRow"     => $invoice_rows,
-                "TotalAmount"    => $order_total,
+                "TotalAmount"    => $order_total_net,
                 "RoundingAmount" => $rounding_amount,
-                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
+                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => $order_total_tax]],
             );
         } else {
             $json_payload = array(
@@ -460,9 +461,9 @@ class Merit_AktivaAPI_Create_Invoice {
                 "PaymentMethod"  => $this->get_payment_method_code($order),
                 "HComment"       => $this->invoice_header_comment,
                 "InvoiceRow"     => $invoice_rows,
-                "TotalAmount"    => $order_total,
+                "TotalAmount"    => $order_total_net,
                 "RoundingAmount" => $rounding_amount,
-                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
+                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => $order_total_tax]],
             );
         }
 
@@ -516,16 +517,14 @@ class Merit_AktivaAPI_Create_Invoice {
     }
 
     /**
-     * Arvutab ümarduserinevuse WooCommerce'i kogusumma ja ridade ümardatud summa vahel.
-     * $rows_total peab sisaldama ka ridade käibemaksu (TaxAmount), et võrdlus
-     * $order_total-iga (brutosumma koos KM-iga) oleks õige.
+     * Arvutab ümarduserinevuse ridade neto summa ja TotalAmount (KM-ita) vahel.
+     * Merit API: TotalAmount = neto, valideerib sum(Price×Qty) + RoundingAmount = TotalAmount.
+     * TaxAmount ridade peal on ainult kuvamiseks — ei kuulu siia arvutusse.
      */
     private function calculate_rounding_amount( array $rows, float $order_total ): float {
         $rows_total = 0.0;
         foreach ( $rows as $row ) {
-            $row_sum = round( (float) $row['Price'] * (float) $row['Quantity'], 2 );
-            $row_tax = isset( $row['TaxAmount'] ) ? (float) $row['TaxAmount'] : 0.0;
-            $rows_total += ( $row_sum + $row_tax );
+            $rows_total += round( (float) $row['Price'] * (float) $row['Quantity'], 2 );
         }
         return round( $order_total - $rows_total, 2 );
     }
@@ -679,9 +678,10 @@ class Merit_AktivaAPI_Create_Invoice {
             ? $company_name
             : trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
 
-        $credit_rows     = $this->create_credit_items_array($order);
-        $credit_total    = -(float) $order->get_total();
-        $rounding_amount = $this->calculate_rounding_amount($credit_rows, $credit_total);
+        $credit_rows      = $this->create_credit_items_array($order);
+        $credit_total_tax = round( (float) $order->get_total_tax(), 2 );
+        $credit_total_net = -round( (float) $order->get_total() - $credit_total_tax, 2 );
+        $rounding_amount  = $this->calculate_rounding_amount($credit_rows, $credit_total_net);
 
         $json_payload = array(
             "Customer" => array(
@@ -708,9 +708,9 @@ class Merit_AktivaAPI_Create_Invoice {
             "ContactName"    => $this->contact_person,
             "HComment"       => 'Krediitarve tellimusele #' . $order->get_id(),
             "InvoiceRow"     => $credit_rows,
-            "TotalAmount"    => $credit_total,
+            "TotalAmount"    => $credit_total_net,
             "RoundingAmount" => $rounding_amount,
-            "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => 0]],
+            "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => -$credit_total_tax]],
         );
 
         $json_body   = json_encode($json_payload);
