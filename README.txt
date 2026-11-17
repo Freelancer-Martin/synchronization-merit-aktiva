@@ -4,7 +4,7 @@ Donate link: https://freelancermartin.com/et
 Tags: woocommerce, merit aktiva, invoicing, accounting, estonia
 Requires at least: 6.7
 Tested up to: 7.0
-Stable tag: 1.2.4
+Stable tag: 1.2.5
 Requires PHP: 8.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -23,6 +23,9 @@ Requires at least the Merit PRO package.
 * Manual synchronization from the admin panel
 * Estonian banking reference number generation (7-3-1 algorithm) with configurable prefix
 * B2B support: company name, Estonian business registry code (validated) and VAT number at checkout
+* Multiple Merit Aktiva warehouses: default warehouse, per-product and per-category warehouse
+* Item type setting: stock item, non-stock item or service
+* VAT types loaded from Merit Aktiva, separate VAT type for shipping
 * B2C support: private customer name and contact details
 * Payment method mapping (WooCommerce payment method → Merit Aktiva payment code)
 * Automatic credit invoice when an order is fully refunded
@@ -41,7 +44,9 @@ This plugin connects to the Merit Aktiva API v2 (aktiva.merit.ee).
 Data transmitted:
 * API authentication (ApiId, timestamp, HMAC-SHA256 signature)
 * Invoice data: customer name, address, email, phone number
-* Product codes, descriptions, quantities, prices, VAT
+* Product codes, descriptions, quantities, prices, VAT, warehouse codes
+* Customer lookup by name and customer creation (getcustomers, sendcustomer)
+* Read-only lookups of VAT types and warehouses (taxes, getlocations)
 * Reference number (Estonian 7-3-1 standard), invoice number, payment due date
 
 Data is transmitted every time an invoice is sent (automatically or manually).
@@ -73,12 +78,20 @@ Privacy Policy: https://www.merit.ee/wp-content/uploads/2024/12/privacy-statemen
 * Reference number prefix — prepended to the reference number (digits only)
 * Payment deadline in days
 * Contact person — displayed on the invoice
+* VAT type — press "Lae Merit API-st" to load VAT types from Merit Aktiva; optional separate VAT type for shipping
+
+**Warehouses and item type:**
+* Default warehouse — press "Lae laod Meritist" to load warehouses from Merit Aktiva. Choose "— Ladu ei saadeta —" to send no warehouse.
+* Per-product warehouse — Products → edit product → Inventory → "Merit Aktiva ladu"
+* Per-category warehouse — Products → Categories → "Merit Aktiva ladu" (also applies to subcategories)
+* Order of precedence: product → parent product (variations) → category → default warehouse
+* Item type — stock item (uses warehouse), non-stock item or service (no warehouse sent). Use non-stock item if you do not track inventory in Merit Aktiva.
 
 **Payment Method Mapping:**
 Link WooCommerce payment methods to Merit Aktiva payment codes (e.g. "Bank Transfer" → "T").
 
 **Business customers at checkout:**
-Customers can check "I am a company", enter a business registry code and VAT number. The registry code is validated using the Estonian business registry algorithm (mod-11).
+Customers can check "Olen ettevõte" (I am a company) and enter the company name, business registry code and VAT number. Company name and registry code are required when ordering as a company. The registry code is validated using the Estonian business registry algorithm (mod-11).
 
 == Usage ==
 
@@ -87,6 +100,11 @@ Orders are synchronized automatically every 5 minutes. For manual sync:
 * Single order: WooCommerce → Orders → open order → "Send invoice to Merit Aktiva"
 
 == Changelog ==
+
+= 1.2.5 =
+* New: Merit Aktiva warehouse selection — default warehouse in settings (loaded from Merit via getlocations), per-product and per-category warehouse. Fixes "Puudub ladu koodiga 1." when the company has no warehouse with code 1
+* New: item type setting (stock item / non-stock item / service); warehouse is sent only for stock items
+* New: Item.DefLocationCode is sent for stock items (required by Merit when the company has several warehouses)
 
 = 1.2.4 =
 * Fix: add-on prices from product field plugins (e.g. Advanced Product Fields gift card +1 €) now reach Merit — line price is taken from the order line instead of the catalog price
