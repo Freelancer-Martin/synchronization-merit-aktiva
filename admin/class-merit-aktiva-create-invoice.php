@@ -31,6 +31,7 @@ class Merit_AktivaAPI_Create_Invoice {
     private $api_id;
     private $api_secret;
     private $tax_field;
+    private $shipping_tax_field;
     private $payment_deadline;
     private $refno_prefix;
     private $invoice_prefix;
@@ -40,12 +41,21 @@ class Merit_AktivaAPI_Create_Invoice {
     private $invoice_header_comment;
     private $payment_method_map;
 
+    const API_GET_CUSTOMERS = 'https://aktiva.merit.ee/api/v1/getcustomers';
+    const API_SEND_CUSTOMER = 'https://aktiva.merit.ee/api/v2/sendcustomer';
+
+    // resolve_private_customer_id() lõi viimati uue kliendi (tellimuse märkme jaoks)
+    private $customer_created_now = false;
+
     // UI hookid registreeritakse ainult üks kord — klass instantseeritakse mitu korda
     // (global + cron run_auto_sync + AJAX), iga uus instants ei tohi hookke uuesti lisada.
     private static $ui_hooks_registered = false;
 
     // Pärast seda katsetuste arvu loobub cron arve saatmisest (vigane tellimus/toode)
     const MAX_RETRY_ATTEMPTS = 3;
+
+    // Suurim lubatud ümardusvahe (€), mis saadetakse RoundingAmount väljal
+    const MAX_ROUNDING = 0.05;
 
     public function __construct() {
         add_action('wp_ajax_sync_invoice',          array($this, 'ajax_create_invoice'));
@@ -85,6 +95,8 @@ class Merit_AktivaAPI_Create_Invoice {
         $this->api_id           = get_option('apikey_text_field');
         $this->api_secret       = get_option('apisecret_text_field');
         $this->tax_field        = get_option('tax_select_field');
+        // Transpordi maksutüüp — tühi = sama mis kaupadel
+        $this->shipping_tax_field = get_option('shipping_tax_select_field') ?: $this->tax_field;
         $this->payment_deadline = get_option('payment_dead_line');
         $this->refno_prefix           = get_option('refno_prefix_field', '');
         $this->invoice_prefix         = get_option('invoice_prefix_field', '');
@@ -387,21 +399,51 @@ class Merit_AktivaAPI_Create_Invoice {
 
         $timestamp = gmdate('YmdHis');
 
-        // Blocks checkout: merit-aktiva/is_company checkbox; fallback billing_company klassikalisele kassale
-        $is_company   = (bool) $order->get_meta('merit-aktiva/is_company') || !empty($order->get_billing_company());
-        $company_name = $is_company ? $order->get_billing_company() : '';
+        // Blocks checkout lisaväljad loetakse õigete võtmetega (_wc_other/, _wc_billing/) — vt woocommerce-extra-fields.php
+        $is_company   = merit_aktiva_order_is_company($order);
+        $company_name = $is_company ? merit_aktiva_get_company_name($order) : '';
         $customer_name = $is_company && !empty($company_name)
             ? $company_name
-            : trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+            : self::clean_name($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
 
         // Registrikood ja KMKR loetakse Blocks checkout lisaväljadest (woocommerce-extra-fields.php)
-        $reg_no = $order->get_meta('merit-aktiva/registration_number') ?: null;
-        $vat_no = $order->get_meta('merit-aktiva/kmkr_number') ?: 0;
+        $reg_no = merit_aktiva_get_order_field($order, 'registration_number') ?: null;
+        $vat_no = merit_aktiva_get_order_field($order, 'kmkr_number') ?: 0;
+
+        // Eraisik: Merit seob ID-ta kliendi dokumenteerimata reeglite järgi vale kliendikaardiga
+        // (kõik eraisikud läksid esimese eraisiku kaardile). Seepärast leiame/loome kliendi ise
+        // ja saadame arve kindla CustomerId-ga.
+        $customer_id = null;
+        $this->customer_created_now = false;
+        if ( !$is_company ) {
+            $customer_id = $this->resolve_private_customer_id($order);
+            if ( is_wp_error($customer_id) ) {
+                $message = 'Kliendi leidmine/loomine Meritis ebaõnnestus — ' . $customer_id->get_error_message();
+                error_log('Merit Aktiva arve viga tellimusel #' . $order_id . ': ' . $message);
+                $order->update_meta_data('_merit_invoice_failed_attempts', $failed_attempts + 1);
+                $order->add_order_note('Merit Aktiva: arve saatmine ebaõnnestus — ' . $message);
+                $order->save();
+                $this->log_sync_event($order_id, false, $message);
+                return ['success' => false, 'message' => $message, 'order_id' => $order_id];
+            }
+        }
 
         $invoice_rows    = $this->create_invoice_items_array($order);
         $order_total_tax = round( (float) $order->get_total_tax(), 2 );
         $order_total_net = round( (float) $order->get_total() - $order_total_tax, 2 );
         $rounding_amount = $this->calculate_rounding_amount($invoice_rows, $order_total_net);
+
+        // RoundingAmount on mõeldud ainult sendi-suuruste ümardusvigade jaoks. Suurem vahe tähendab,
+        // et mõni tellimuse osa jäi arveridadelt välja — ei peida seda ümardusse, vaid teatame veast.
+        if ( abs($rounding_amount) > self::MAX_ROUNDING ) {
+            $message = $this->rows_mismatch_message($order_total_net, $rounding_amount);
+            error_log('Merit Aktiva arve viga tellimusel #' . $order_id . ': ' . $message);
+            $order->update_meta_data('_merit_invoice_failed_attempts', $failed_attempts + 1);
+            $order->add_order_note('Merit Aktiva: arve saatmine ebaõnnestus — ' . $message);
+            $order->save();
+            $this->log_sync_event($order_id, false, $message);
+            return ['success' => false, 'message' => $message, 'order_id' => $order_id];
+        }
 
         if ( $is_company ) {
             $json_payload = array(
@@ -432,15 +474,14 @@ class Merit_AktivaAPI_Create_Invoice {
                 "InvoiceRow"     => $invoice_rows,
                 "TotalAmount"    => $order_total_net,
                 "RoundingAmount" => $rounding_amount,
-                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => $order_total_tax]],
+                "TaxAmount"      => $this->build_tax_amounts($invoice_rows, $order_total_tax),
             );
         } else {
             $json_payload = array(
                 "Customer" => array(
-                    "Name"            => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
-                    "RegNo"           => null,
+                    "Id"              => $customer_id,
+                    "Name"            => self::clean_name($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
                     "NotTDCustomer"   => true,
-                    "VatRegNo"        => 0,
                     "CurrencyCode"    => $order->get_currency(),
                     "PaymentDeadLine" => $this->payment_deadline,
                     "OverDueCharge"   => 0,
@@ -463,7 +504,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 "InvoiceRow"     => $invoice_rows,
                 "TotalAmount"    => $order_total_net,
                 "RoundingAmount" => $rounding_amount,
-                "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => $order_total_tax]],
+                "TaxAmount"      => $this->build_tax_amounts($invoice_rows, $order_total_tax),
             );
         }
 
@@ -503,13 +544,23 @@ class Merit_AktivaAPI_Create_Invoice {
             return ['success' => false, 'message' => $message, 'order_id' => $order_id];
         }
 
-        $result_data = json_decode($body, true);
+        $result_data = $this->decode_api_body($body);
         if ( !empty($result_data['SIHId']) ) {
             $order->update_meta_data('_merit_invoice_sih_id', $result_data['SIHId']);
         }
+        // Salvestame, millise kliendikaardiga Merit arve sidus — vajalik krediitarve jaoks ja diagnostikaks
+        $linked_customer_id = !empty($result_data['CustomerId']) ? $result_data['CustomerId'] : $customer_id;
+        if ( $linked_customer_id ) {
+            $order->update_meta_data('_merit_customer_id', $linked_customer_id);
+        }
+        $customer_note = '';
+        if ( $linked_customer_id ) {
+            $is_new        = !empty($result_data['NewCustomer']) || $this->customer_created_now;
+            $customer_note = ' Klient: ' . $linked_customer_id . ( $is_new ? ' (uus klient)' : ' (olemasolev klient)' ) . '.';
+        }
         $order->update_meta_data('_merit_invoice_sent_at', current_time('mysql'));
         $order->delete_meta_data('_merit_invoice_failed_attempts');
-        $order->add_order_note('Merit Aktiva: arve edukalt saadetud ' . current_time('d.m.Y H:i') . '.');
+        $order->add_order_note('Merit Aktiva: arve edukalt saadetud ' . current_time('d.m.Y H:i') . '.' . $customer_note);
         $order->save();
         $this->log_sync_event($order_id, true, 'Arve saadetud');
 
@@ -517,10 +568,157 @@ class Merit_AktivaAPI_Create_Invoice {
     }
 
     /**
+     * Normaliseerib nime: eemaldab algus-/lõputühikud ja asendab mitu järjestikust tühikut ühega.
+     * Ilma selleta tekitaks "John  Lennon" (topelttühik) Meritis eraldi kliendikaardi.
+     */
+    private static function clean_name( $name ) {
+        return trim( preg_replace( '/\s+/u', ' ', (string) $name ) );
+    }
+
+    /**
+     * Leiab Meritist eraisiku kliendikaardi täpse nime järgi või loob uue.
+     * Merit nõuab kliendinime unikaalsust, seega sama nimi = sama klient.
+     *
+     * @return string|null|WP_Error CustomerId; null kui nimi puudub; WP_Error API vea korral
+     */
+    private function resolve_private_customer_id( $order ) {
+        $this->customer_created_now = false;
+
+        $name = self::clean_name( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+        if ( $name === '' ) {
+            return null;
+        }
+
+        // 1. Otsing (Name = laia vastega otsing, filtreerime ise täpse nime järgi)
+        $found = $this->merit_api_request( self::API_GET_CUSTOMERS, array( 'Name' => $name ) );
+        if ( is_wp_error($found) ) {
+            return $found;
+        }
+        $customers = ( is_array($found) && isset($found['CustomerId']) ) ? array( $found ) : (array) $found;
+
+        $needle  = mb_strtolower( $name );
+        $email   = strtolower( trim( (string) $order->get_billing_email() ) );
+        $matches = array();
+        foreach ( $customers as $c ) {
+            if ( is_array($c) && !empty($c['CustomerId']) && mb_strtolower( self::clean_name( (string) ($c['Name'] ?? '') ) ) === $needle ) {
+                $matches[] = $c;
+            }
+        }
+        if ( $matches ) {
+            foreach ( $matches as $c ) {
+                if ( $email !== '' && strtolower( trim( (string) ($c['Email'] ?? '') ) ) === $email ) {
+                    return $c['CustomerId'];
+                }
+            }
+            return $matches[0]['CustomerId'];
+        }
+
+        // 2. Ei leitud — loome uue kliendi
+        $created = $this->merit_api_request( self::API_SEND_CUSTOMER, array(
+            'Name'            => $name,
+            'NotTDCustomer'   => true,
+            'CountryCode'     => $order->get_billing_country() ?: 'EE',
+            'Address'         => $order->get_billing_address_1(),
+            'City'            => $order->get_billing_city(),
+            'County'          => $order->get_billing_state(),
+            'PostalCode'      => $order->get_billing_postcode(),
+            'PhoneNo'         => $order->get_billing_phone(),
+            'Email'           => $order->get_billing_email(),
+            'CurrencyCode'    => $order->get_currency(),
+            'PaymentDeadLine' => $this->payment_deadline,
+            'OverDueCharge'   => 0,
+            'RefNoBase'       => 1,
+        ) );
+        if ( is_wp_error($created) ) {
+            return $created;
+        }
+        $new_id = is_array($created) ? ( $created['Id'] ?? $created['CustomerId'] ?? null ) : ( is_string($created) ? $created : null );
+        if ( !$new_id ) {
+            return new WP_Error( 'merit_customer', 'Merit ei tagastanud uue kliendi ID-d' );
+        }
+        $this->customer_created_now = true;
+        return $new_id;
+    }
+
+    /**
+     * Allkirjastatud POST päring Merit API-le. Tagastab dekodeeritud vastuse või WP_Error.
+     */
+    private function merit_api_request( $url, array $payload ) {
+        $timestamp   = gmdate('YmdHis');
+        $json_body   = json_encode($payload);
+        $signature   = base64_encode(hash_hmac('sha256', $this->api_id . $timestamp . $json_body, $this->api_secret, true));
+        $request_url = $url . '?ApiId=' . $this->api_id . '&timestamp=' . $timestamp . '&signature=' . urlencode($signature);
+
+        $response = wp_remote_post($request_url, array(
+            'body'    => $json_body,
+            'headers' => array('Content-Type' => 'application/json'),
+            'timeout' => 15,
+        ));
+        if ( is_wp_error($response) ) {
+            return $response;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body        = wp_remote_retrieve_body($response);
+        if ( $status_code < 200 || $status_code >= 300 ) {
+            return new WP_Error( 'merit_api', $this->translate_api_error($body, $status_code) );
+        }
+        return $this->decode_api_body($body);
+    }
+
+    /**
+     * Merit tagastab vahel JSON-i stringina kodeeritud JSON-i ("\"{...}\"") — dekodeerime vajadusel kaks korda.
+     */
+    private function decode_api_body( $body ) {
+        $data = json_decode($body, true);
+        if ( is_string($data) ) {
+            $inner = json_decode($data, true);
+            if ( json_last_error() === JSON_ERROR_NONE ) {
+                $data = $inner;
+            }
+        }
+        return $data;
+    }
+
+    /**
      * Arvutab ümarduserinevuse ridade neto summa ja TotalAmount (KM-ita) vahel.
      * Merit API: TotalAmount = neto, valideerib sum(Price×Qty) + RoundingAmount = TotalAmount.
      * TaxAmount ridade peal on ainult kuvamiseks — ei kuulu siia arvutusse.
      */
+    /**
+     * Arve päise KM kokkuvõte maksutüüpide kaupa (transpordil võib olla teine maksutüüp).
+     * Ridade KM summeeritakse TaxId järgi; ümardusvahe tellimuse KM-ist lisatakse põhimaksutüübile,
+     * et kokkuvõtte summa võrduks alati tellimuse KM-iga.
+     */
+    private function build_tax_amounts( array $rows, float $total_tax ): array {
+        $by_tax = array();
+        foreach ( $rows as $row ) {
+            $id = $row['TaxId'] ?? $this->tax_field;
+            $by_tax[$id] = ( $by_tax[$id] ?? 0.0 ) + (float) ( $row['TaxAmount'] ?? 0 );
+        }
+        if ( !isset($by_tax[$this->tax_field]) ) {
+            $by_tax = array( $this->tax_field => 0.0 ) + $by_tax;
+        }
+        $by_tax = array_map( function( $v ) { return round( $v, 2 ); }, $by_tax );
+        $by_tax[$this->tax_field] = round( $by_tax[$this->tax_field] + ( $total_tax - array_sum($by_tax) ), 2 );
+
+        $result = array();
+        foreach ( $by_tax as $id => $amount ) {
+            // Iga arveridadel kasutatud maksutüüp + põhimaksutüüp (ka siis, kui summa on 0)
+            $result[] = array( 'TaxId' => $id, 'Amount' => $amount );
+        }
+        return $result;
+    }
+
+    private function rows_mismatch_message( $total_net, $diff ) {
+        return sprintf(
+            'Arveridade summa (%s) ei võrdu tellimuse summaga ilma KM-ita (%s), vahe %s. Mõni tellimuse osa (toode, tasu, transport või allahindlus) ei jõudnud arveridadele.',
+            number_format($total_net - $diff, 2, ',', ''),
+            number_format($total_net, 2, ',', ''),
+            number_format($diff, 2, ',', '')
+        );
+    }
+
     private function calculate_rounding_amount( array $rows, float $order_total ): float {
         $rows_total = 0.0;
         foreach ( $rows as $row ) {
@@ -586,7 +784,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'Price'          => $shipping_total,
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
-                'TaxId'          => $this->tax_field,
+                'TaxId'          => $this->shipping_tax_field,
                 'LocationCode'   => '1',
                 'TaxAmount'      => (float) $shipping_item->get_total_tax(),
             );
@@ -594,6 +792,12 @@ class Merit_AktivaAPI_Create_Invoice {
                 $shipping_row['AccountCode'] = $this->income_account;
             }
             $payload_arrays[] = $shipping_row;
+        }
+
+        // Tasud (WC_Order_Item_Fee) — nt lisaväljade pistikprogrammide lisatasud (soovikaart +1 €),
+        // käsitsi lisatud tasud. Ilma nendeta ei võrdu ridade summa arve summaga.
+        foreach ( $this->get_fee_rows($order) as $fee_row ) {
+            $payload_arrays[] = $fee_row;
         }
 
         // Allahindlus — lisatakse eraldi reana kui kasutati kupongi
@@ -676,23 +880,40 @@ class Merit_AktivaAPI_Create_Invoice {
         }
 
         $timestamp    = gmdate('YmdHis');
-        $is_company   = (bool) $order->get_meta('merit-aktiva/is_company') || !empty($order->get_billing_company());
-        $company_name = $is_company ? $order->get_billing_company() : '';
+        $is_company   = merit_aktiva_order_is_company($order);
+        $company_name = $is_company ? merit_aktiva_get_company_name($order) : '';
         $customer_name = $is_company && !empty($company_name)
             ? $company_name
-            : trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+            : self::clean_name($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
 
         $credit_rows      = $this->create_credit_items_array($order);
         $credit_total_tax = round( (float) $order->get_total_tax(), 2 );
         $credit_total_net = -round( (float) $order->get_total() - $credit_total_tax, 2 );
         $rounding_amount  = $this->calculate_rounding_amount($credit_rows, $credit_total_net);
 
+        if ( abs($rounding_amount) > self::MAX_ROUNDING ) {
+            $message = $this->rows_mismatch_message($credit_total_net, $rounding_amount);
+            $order->add_order_note('Merit Aktiva: krediitarve saatmine ebaõnnestus — ' . $message);
+            $order->save();
+            return ['success' => false, 'message' => $message];
+        }
+
+        // Krediitarve läheb samale kliendikaardile, millega originaalarve seoti.
+        // Vanad tellimused (enne _merit_customer_id salvestamist): jätame endised väljad alles,
+        // et Merit seoks krediitarve samale kaardile kui originaalarve.
+        $stored_customer_id = $order->get_meta('_merit_customer_id') ?: null;
+        $credit_customer = array(
+            "Id"              => $stored_customer_id,
+            "Name"            => $customer_name,
+            "NotTDCustomer"   => !$is_company,
+        );
+        if ( $is_company || !$stored_customer_id ) {
+            $credit_customer["RegNo"]    = merit_aktiva_get_order_field($order, 'registration_number') ?: null;
+            $credit_customer["VatRegNo"] = merit_aktiva_get_order_field($order, 'kmkr_number') ?: 0;
+        }
+
         $json_payload = array(
-            "Customer" => array(
-                "Name"            => $customer_name,
-                "RegNo"           => $order->get_meta('merit-aktiva/registration_number') ?: null,
-                "NotTDCustomer"   => !$is_company,
-                "VatRegNo"        => $order->get_meta('merit-aktiva/kmkr_number') ?: 0,
+            "Customer" => $credit_customer + array(
                 "CurrencyCode"    => $order->get_currency(),
                 "PaymentDeadLine" => $this->payment_deadline,
                 "OverDueCharge"   => 0,
@@ -714,7 +935,7 @@ class Merit_AktivaAPI_Create_Invoice {
             "InvoiceRow"     => $credit_rows,
             "TotalAmount"    => $credit_total_net,
             "RoundingAmount" => $rounding_amount,
-            "TaxAmount"      => [["TaxId" => $this->tax_field, "Amount" => -$credit_total_tax]],
+            "TaxAmount"      => $this->build_tax_amounts($credit_rows, -$credit_total_tax),
         );
 
         $json_body   = json_encode($json_payload);
@@ -759,6 +980,9 @@ class Merit_AktivaAPI_Create_Invoice {
         foreach ( $order->get_items() as $item ) {
             $product = $item->get_product();
             $sku     = $product ? substr($product->get_sku(), 0, 20) : '';
+            $qty     = max( 1, (int) $item->get_quantity() );
+            // Sama mis arvel: tellimuse rea KM-ita ühikuhind (sisaldab lisaväljade hinda, nt soovikaart)
+            $unit_price = round( (float) $item->get_subtotal() / $qty, 4 );
             $row     = array(
                 'Item' => array(
                     'Code'        => $sku,
@@ -766,8 +990,8 @@ class Merit_AktivaAPI_Create_Invoice {
                     'Type'        => 1,
                     'UOMName'     => $this->default_unit ?: 'tk',
                 ),
-                'Quantity'       => -$item->get_quantity(),
-                'Price'          => $product ? (float) $product->get_price() : 0,
+                'Quantity'       => -$qty,
+                'Price'          => $unit_price,
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
@@ -791,9 +1015,64 @@ class Merit_AktivaAPI_Create_Invoice {
                 'Price'          => $shipping_total,
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
-                'TaxId'          => $this->tax_field,
+                'TaxId'          => $this->shipping_tax_field,
                 'LocationCode'   => '1',
                 'TaxAmount'      => -(float) $shipping_item->get_total_tax(),
+            );
+            if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
+            $rows[] = $row;
+        }
+        foreach ( $this->get_fee_rows($order, -1) as $fee_row ) {
+            $rows[] = $fee_row;
+        }
+        // Allahindlus — sama rida mis originaalarvel, vastupidise märgiga
+        $discount_total = (float) $order->get_discount_total();
+        if ( $discount_total > 0 ) {
+            $coupon_codes = implode(', ', $order->get_coupon_codes());
+            $row = array(
+                'Item' => array(
+                    'Code'        => 'DISCOUNT',
+                    'Description' => 'Allahindlus' . ($coupon_codes ? ': ' . $coupon_codes : ''),
+                    'Type'        => 1,
+                    'UOMName'     => $this->default_unit ?: 'tk',
+                ),
+                'Quantity'       => -1,
+                'Price'          => -$discount_total,
+                'DiscountPct'    => 0,
+                'DiscountAmount' => 0,
+                'TaxId'          => $this->tax_field,
+                'LocationCode'   => '1',
+                'TaxAmount'      => (float) $order->get_discount_tax(),
+            );
+            if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
+            $rows[] = $row;
+        }
+        return $rows;
+    }
+
+    /**
+     * Ehitab arveread tellimuse tasudest (fee). $sign = 1 arvel, -1 krediitarvel.
+     */
+    private function get_fee_rows( $order, $sign = 1 ) {
+        $rows = [];
+        foreach ( $order->get_fees() as $fee ) {
+            $fee_total = round( (float) $fee->get_total(), 2 );
+            if ( $fee_total == 0 ) continue;
+
+            $row = array(
+                'Item' => array(
+                    'Code'        => 'TASU',
+                    'Description' => $fee->get_name() ?: 'Lisatasu',
+                    'Type'        => 1,
+                    'UOMName'     => $this->default_unit ?: 'tk',
+                ),
+                'Quantity'       => $sign,
+                'Price'          => $fee_total,
+                'DiscountPct'    => 0,
+                'DiscountAmount' => 0,
+                'TaxId'          => $this->tax_field,
+                'LocationCode'   => '1',
+                'TaxAmount'      => $sign * (float) $fee->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
             $rows[] = $row;

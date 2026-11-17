@@ -614,6 +614,9 @@ class Merit_Aktiva_Settings {
         add_settings_field('tax_select_field', 'Käibemaksu tüüp', array($this, 'select_field_callback'), 'theme_options', 'theme_options_section');
         register_setting('theme_options_group', 'tax_select_field', array($this, 'validate_tax_field'));
 
+        add_settings_field('shipping_tax_select_field', 'Transpordi käibemaksu tüüp', array($this, 'shipping_tax_field_callback'), 'theme_options', 'theme_options_section');
+        register_setting('theme_options_group', 'shipping_tax_select_field', array('sanitize_callback' => 'sanitize_text_field', 'default' => ''));
+
         add_settings_field('payment_status_select_field', 'Arve saatmise tellimuse staatus', array($this, 'payment_status_field_callback'), 'theme_options', 'theme_options_section');
         register_setting('theme_options_group', 'payment_status_select_field', array($this, 'validate_payment_status'));
 
@@ -663,20 +666,48 @@ class Merit_Aktiva_Settings {
         echo '<p class="description">Mitu päeva pärast arve väljastamist on maksetähtaeg. Näiteks <strong>14</strong> = 14 päeva.</p>';
     }
 
-    public function select_field_callback() {
-        $value = get_option('tax_select_field');
-        // Merit Aktiva Eesti standardsed käibemaksuliigid
-        $static_taxes = array(
+    /**
+     * Maksutüüpide valikud: Meritist laaditud nimekiri, selle puudumisel eellaaditud Eesti standardid.
+     */
+    private function get_tax_options() {
+        $cached = get_option('merit_tax_types_cache');
+        if ( is_array($cached) && $cached ) {
+            return $cached;
+        }
+        return array(
             array('TaxId' => '973a4395-665f-47a6-a5b6-5384dd24f8d0', 'Code' => '',     'Name' => '0% — Ei ole käive / maksuvaba'),
             array('TaxId' => 'fd050f9b-f376-40fb-aee5-af2d1f04970f', 'Code' => '3040', 'Name' => '9% — Kauba, teenuse müük Eestis 9%'),
             array('TaxId' => 'b9b25735-6a15-4d4e-8720-25b254ae3d21', 'Code' => '3000', 'Name' => '22% — Kauba, teenuse müük Eestis 22%'),
             array('TaxId' => '1e420e04-3dd7-46a5-b71f-0490779c2638', 'Code' => '3000', 'Name' => '24% — Kauba, teenuse müük Eestis 24%'),
         );
+    }
+
+    public function shipping_tax_field_callback() {
+        $value = get_option('shipping_tax_select_field');
+        $taxes = $this->get_tax_options();
+        echo '<select name="shipping_tax_select_field" id="merit-shipping-tax-select">';
+        echo '<option value="">— Sama mis kaupadel —</option>';
+        foreach ( $taxes as $t ) {
+            $label = ( $t['Code'] ? $t['Code'] . ' — ' : '' ) . $t['Name'];
+            echo '<option value="' . esc_attr($t['TaxId']) . '" ' . selected($value, $t['TaxId'], false) . '>' . esc_html($label) . '</option>';
+        }
+        if ( $value && ! in_array($value, array_column($taxes, 'TaxId')) ) {
+            echo '<option value="' . esc_attr($value) . '" selected="selected">' . esc_html($value) . '</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">Transpordiridade (nt SmartPost, Omniva, kuller) käibemaksu tüüp. Vali eraldi ainult siis, kui transpordi KM-määr erineb kaupade omast. Valikud laaditakse koos ülemise "Lae Merit API-st" nupuga.</p>';
+    }
+
+    public function select_field_callback() {
+        $value = get_option('tax_select_field');
+        // Kui maksutüübid on Meritist laaditud, kasutame neid (õiged UUID-d selle ettevõtte jaoks)
+        $cached       = get_option('merit_tax_types_cache');
+        $static_taxes = $this->get_tax_options();
         $nonce = wp_create_nonce('merit_tax_types_nonce');
         echo '<select name="tax_select_field" id="merit-tax-select">';
         foreach ( $static_taxes as $t ) {
             $label = ( $t['Code'] ? $t['Code'] . ' — ' : '' ) . $t['Name'];
-            echo '<option value="' . esc_attr($t['TaxId']) . '" ' . selected($value, $t['TaxId'], false) . '>' . esc_html($t['Name']) . '</option>';
+            echo '<option value="' . esc_attr($t['TaxId']) . '" ' . selected($value, $t['TaxId'], false) . '>' . esc_html($label) . '</option>';
         }
         if ( $value && ! in_array($value, array_column($static_taxes, 'TaxId')) ) {
             echo '<option value="' . esc_attr($value) . '" selected="selected">' . esc_html($value) . '</option>';
@@ -684,11 +715,16 @@ class Merit_Aktiva_Settings {
         echo '</select>';
         echo '<button type="button" id="merit-load-taxes" class="button button-secondary" style="margin-left:8px;">Lae Merit API-st</button>';
         echo '<span id="merit-tax-status" style="margin-left:8px;color:#666;"></span>';
-        echo '<p class="description">Käibemaksumäär arveridadele. Eesti standard on <strong>22%</strong>. UUID-d on orientiirsed — kasuta "Lae Merit API-st" täpsustamiseks.</p>';
+        if ( is_array($cached) && $cached ) {
+            echo '<p class="description">Käibemaksumäär arveridadele. Valikud on laaditud sinu Merit Aktiva ettevõttest (Seaded → Käibemaksu seaded).</p>';
+        } else {
+            echo '<p class="description">Käibemaksumäär arveridadele. Eesti standard on <strong>24%</strong>. Eellaaditud UUID-d võivad sinu ettevõttes erineda — vajuta "Lae Merit API-st", et laadida õiged maksutüübid.</p>';
+        }
         ?>
         <script>
         jQuery(document).ready(function($) {
             var savedVal = <?php echo json_encode($value); ?>;
+            var savedShippingVal = <?php echo json_encode(get_option('shipping_tax_select_field')); ?>;
 
             $('#merit-load-taxes').on('click', function() {
                 $('#merit-tax-status').text('Laadin...');
@@ -699,7 +735,8 @@ class Merit_Aktiva_Settings {
                     nonce:  <?php echo json_encode($nonce); ?>
                 }, function(r) {
                     if (!r.success || !r.data || !r.data.length) {
-                        $('#merit-tax-status').css('color','#b45309').text('Merit API ei tagasta maksutüüpe — kasuta eellaadituid valikuid');
+                        var msg = (!r.success && typeof r.data === 'string') ? r.data : 'Merit API ei tagastanud maksutüüpe';
+                        $('#merit-tax-status').css('color','#b45309').text(msg + ' — kasutan eellaaditud valikuid');
                         $(btn).prop('disabled', false);
                         return;
                     }
@@ -711,7 +748,17 @@ class Merit_Aktiva_Settings {
                         if (t.TaxId === savedVal) opt.prop('selected', true);
                         sel.append(opt);
                     });
-                    $('#merit-tax-status').css('color','#2e7d32').text('✓ ' + r.data.length + ' maksutüüpi laaditud');
+                    var ship = $('#merit-shipping-tax-select');
+                    if (ship.length) {
+                        ship.find('option').not('[value=""]').remove();
+                        $.each(r.data, function(i, t) {
+                            var label = (t.Code ? t.Code + ' — ' : '') + (t.Name || t.TaxId);
+                            var opt = $('<option>').val(t.TaxId).text(label);
+                            if (t.TaxId === savedShippingVal) opt.prop('selected', true);
+                            ship.append(opt);
+                        });
+                    }
+                    $('#merit-tax-status').css('color','#2e7d32').text('✓ ' + r.data.length + ' maksutüüpi laaditud Meritist — vali sobiv ja salvesta');
                     $(btn).prop('disabled', false);
                 }).fail(function() {
                     $('#merit-tax-status').css('color','#d63638').text('Ühenduse viga');
@@ -811,25 +858,78 @@ class Merit_Aktiva_Settings {
         $api_id     = get_option('apikey_text_field');
         $api_secret = get_option('apisecret_text_field');
         if ( ! $api_id || ! $api_secret ) {
-            wp_send_json_error('API seadistused puuduvad');
+            wp_send_json_error('API ID või API Key on seadistamata — salvesta need enne');
         }
-        $timestamp = gmdate('YmdHis');
-        $payload   = json_encode([]);
-        $signature = base64_encode(hash_hmac('sha256', $api_id . $timestamp . $payload, $api_secret, true));
-        $url       = 'https://aktiva.merit.ee/api/v2/gettaxes?ApiId=' . urlencode($api_id) . '&timestamp=' . $timestamp . '&signature=' . urlencode($signature);
-        $response  = wp_remote_post($url, [
-            'body'    => $payload,
-            'headers' => ['Content-Type' => 'application/json'],
-            'timeout' => 15,
-        ]);
-        if ( is_wp_error($response) ) {
-            wp_send_json_error($response->get_error_message());
+
+        // Merit dokumentatsioon: GET https://aktiva.merit.ee/api/v2/taxes (ilma kehata).
+        // Varuvariant: vanem v1/gettaxes POST {} — mõned kontod/versioonid vastavad ainult sellele.
+        $attempts = array(
+            array('GET',  'https://aktiva.merit.ee/api/v2/taxes',    ''),
+            array('POST', 'https://aktiva.merit.ee/api/v2/taxes',    '{}'),
+            array('POST', 'https://aktiva.merit.ee/api/v1/gettaxes', '{}'),
+        );
+        $last_error = 'Merit API ei tagastanud maksutüüpe';
+        foreach ( $attempts as $a ) {
+            list($method, $endpoint, $body) = $a;
+            $timestamp = gmdate('YmdHis');
+            $signature = base64_encode(hash_hmac('sha256', $api_id . $timestamp . $body, $api_secret, true));
+            $url       = $endpoint . '?ApiId=' . urlencode($api_id) . '&timestamp=' . $timestamp . '&signature=' . urlencode($signature);
+            $args      = array('method' => $method, 'headers' => array('Content-Type' => 'application/json'), 'timeout' => 15);
+            if ( $body !== '' ) {
+                $args['body'] = $body;
+            }
+            $response = wp_remote_request($url, $args);
+            if ( is_wp_error($response) ) {
+                $last_error = $response->get_error_message();
+                continue;
+            }
+            $code = wp_remote_retrieve_response_code($response);
+            $raw  = wp_remote_retrieve_body($response);
+            if ( $code < 200 || $code >= 300 ) {
+                $last_error = 'HTTP ' . $code . ( $raw ? ': ' . wp_strip_all_tags(mb_substr($raw, 0, 200)) : '' );
+                continue;
+            }
+            $taxes = $this->normalize_tax_types($raw);
+            if ( $taxes ) {
+                update_option('merit_tax_types_cache', $taxes, false);
+                wp_send_json_success($taxes);
+            }
+            $last_error = 'Merit API vastus oli tühi või tundmatu kujuga';
         }
-        $taxes = json_decode(wp_remote_retrieve_body($response), true);
-        if ( ! is_array($taxes) || empty($taxes) ) {
-            wp_send_json_error('Merit API ei tagastanud maksutüüpe');
+        error_log('Merit Aktiva maksutüüpide laadimine ebaõnnestus: ' . $last_error);
+        wp_send_json_error($last_error);
+    }
+
+    /**
+     * Teisendab Merit taxes vastuse ühtsele kujule [TaxId, Code, Name, TaxPct].
+     * Merit tagastab vahel JSON-i stringina kodeeritud JSON-i — dekodeerime vajadusel kaks korda.
+     */
+    private function normalize_tax_types( $raw ) {
+        $data = json_decode($raw, true);
+        if ( is_string($data) ) {
+            $data = json_decode($data, true);
         }
-        wp_send_json_success($taxes);
+        if ( ! is_array($data) ) {
+            return array();
+        }
+        if ( isset($data['Id']) || isset($data['TaxId']) ) {
+            $data = array($data);
+        }
+        $taxes = array();
+        foreach ( $data as $t ) {
+            if ( ! is_array($t) ) continue;
+            $id = $t['Id'] ?? $t['TaxId'] ?? '';
+            if ( ! $id || ! empty($t['NonActive']) ) continue;
+            $pct  = isset($t['TaxPct']) ? rtrim(rtrim(number_format((float) $t['TaxPct'], 2, '.', ''), '0'), '.') . '%' : '';
+            $name = (string) ( $t['Name'] ?? $t['NameEN'] ?? '' );
+            $taxes[] = array(
+                'TaxId'  => sanitize_text_field($id),
+                'Code'   => sanitize_text_field((string) ( $t['Code'] ?? '' )),
+                'Name'   => sanitize_text_field( $pct !== '' && strpos($name, $pct) === false ? $pct . ' — ' . $name : $name ),
+                'TaxPct' => isset($t['TaxPct']) ? (float) $t['TaxPct'] : null,
+            );
+        }
+        return $taxes;
     }
 
     /**
@@ -843,7 +943,7 @@ class Merit_Aktiva_Settings {
         }
         $keys = array(
             'apikey_text_field', 'apisecret_text_field', 'payment_dead_line',
-            'tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
+            'tax_select_field', 'shipping_tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
             'invoice_prefix_field', 'default_unit_field', 'income_account_field',
             'contact_person_field', 'invoice_header_comment_field', 'payment_method_mapping',
         );
@@ -866,7 +966,7 @@ class Merit_Aktiva_Settings {
         }
         $allowed_keys = array(
             'apikey_text_field', 'apisecret_text_field', 'payment_dead_line',
-            'tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
+            'tax_select_field', 'shipping_tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
             'invoice_prefix_field', 'default_unit_field', 'income_account_field',
             'contact_person_field', 'invoice_header_comment_field', 'payment_method_mapping',
         );
