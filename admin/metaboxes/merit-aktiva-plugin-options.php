@@ -778,11 +778,11 @@ class Merit_Aktiva_Settings {
 
     public function location_field_callback() {
         $value = merit_aktiva_default_location_code();
-        echo merit_aktiva_location_select_html('merit_location_code', $value, '— Ladu ei saadeta —', 'merit-location-select');
-        echo merit_aktiva_locations_loader_html();
-        echo '<p class="description">Merit Aktiva ladu, kuhu müük vaikimisi läheb (arverea <code>LocationCode</code>). Vajuta "Lae laod Meritist", vali ladu ja salvesta. '
+        merit_aktiva_the_location_select('merit_location_code', $value, '— Ladu ei saadeta —', 'merit-location-select');
+        merit_aktiva_the_locations_loader();
+        echo wp_kses_post( '<p class="description">Merit Aktiva ladu, kuhu müük vaikimisi läheb (arverea <code>LocationCode</code>). Vajuta "Lae laod Meritist", vali ladu ja salvesta. '
            . 'Tootele või tootekategooriale saab määrata eraldi lao: <strong>Tooted → muuda toodet → Laoseis</strong> või <strong>Tooted → Kategooriad</strong>. '
-           . 'Ladu kasutatakse ainult laokauba puhul.</p>';
+           . 'Ladu kasutatakse ainult laokauba puhul.</p>' );
     }
 
     public function item_type_field_callback() {
@@ -797,8 +797,8 @@ class Merit_Aktiva_Settings {
             echo '<option value="' . esc_attr($k) . '" ' . selected($value, $k, false) . '>' . esc_html($label) . '</option>';
         }
         echo '</select>';
-        echo '<p class="description">Mis tüüpi kaubana arveread Meritisse lähevad. Kui sa Merit Aktivas laoseisu ei pea, vali <strong>Mittelaokaup</strong> — siis pole ladu vaja. '
-           . 'Kehtib ka transpordi-, tasu- ja allahindluse ridadele.</p>';
+        echo wp_kses_post( '<p class="description">Mis tüüpi kaubana arveread Meritisse lähevad. Kui sa Merit Aktivas laoseisu ei pea, vali <strong>Mittelaokaup</strong> — siis pole ladu vaja. '
+           . 'Kehtib ka transpordi-, tasu- ja allahindluse ridadele.</p>' );
     }
 
     public function validate_item_type( $input ) {

@@ -21,8 +21,11 @@
  * Author URI:        https://freelancermartin.com/et
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
- * Text Domain:       synchronization-merit-aktiva 
+ * Text Domain:       synchronization-merit-aktiva
  * Domain Path:       /languages
+ * Requires at least: 6.7
+ * Requires PHP:      8.0
+ * Requires Plugins:  woocommerce
  */
 
 

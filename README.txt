@@ -3,7 +3,7 @@ Contributors: freelancermartin
 Donate link: https://freelancermartin.com/et
 Tags: woocommerce, merit aktiva, invoicing, accounting, estonia
 Requires at least: 6.7
-Tested up to: 7.0
+Tested up to: 7.1
 Stable tag: 1.2.5
 Requires PHP: 8.0
 License: GPLv2 or later
@@ -155,3 +155,11 @@ Orders are synchronized automatically every 5 minutes. For manual sync:
 
 Email: freelancermartin1@gmail.com
 Website: https://freelancermartin.com/et
+
+== Upgrade Notice ==
+
+= 1.2.5 =
+Adds Merit Aktiva warehouse selection. After updating, open the plugin settings, press "Lae laod Meritist" (load warehouses) and "Lae Merit API-st" (load VAT types), choose them and save.
+
+= 1.2.4 =
+Fixes private customers being merged into one Merit customer card, company checkout fields, gift card / fee rows and VAT types. Load VAT types in settings after updating.

@@ -173,48 +173,69 @@ add_action( 'wp_ajax_merit_get_locations', function() {
 } );
 
 /**
- * "Lae laod Meritist" nupp + skript, mis täidab kõik lehe lao valikud (.merit-location-select).
+ * Lubatud HTML lao valikukasti ja laadimisnupu väljundis (wp_kses).
  */
-function merit_aktiva_locations_loader_html() {
-    static $script_printed = false;
-    $html  = '<button type="button" class="button button-secondary merit-load-locations" style="margin-left:8px;">Lae laod Meritist</button>';
-    $html .= '<span class="merit-locations-status" style="margin-left:8px;color:#666;"></span>';
-    if ( ! $script_printed ) {
-        $script_printed = true;
-        $nonce = wp_create_nonce( 'merit_locations_nonce' );
-        ob_start();
-        ?>
-        <script>
-        jQuery(function($) {
-            $(document).on('click', '.merit-load-locations', function() {
-                var btn = $(this), status = btn.siblings('.merit-locations-status');
-                btn.prop('disabled', true); status.css('color', '#666').text('Laadin...');
-                $.post(ajaxurl, { action: 'merit_get_locations', nonce: <?php echo wp_json_encode( $nonce ); ?> }, function(r) {
-                    btn.prop('disabled', false);
-                    if (!r.success || !r.data || !r.data.length) {
-                        status.css('color', '#b45309').text((r && typeof r.data === 'string') ? r.data : 'Ladusid ei leitud');
-                        return;
-                    }
-                    $('.merit-location-select').each(function() {
-                        var sel = $(this), cur = sel.val();
-                        sel.find('option').not('[value=""]').remove();
-                        $.each(r.data, function(i, l) {
-                            sel.append($('<option>').val(l.Code).text(l.Code + (l.Name ? ' — ' + l.Name : '')));
-                        });
-                        sel.val(cur);
+function merit_aktiva_locations_allowed_html() {
+    return array(
+        'select' => array( 'name' => true, 'id' => true, 'class' => true ),
+        'option' => array( 'value' => true, 'selected' => true ),
+        'button' => array( 'type' => true, 'class' => true, 'style' => true ),
+        'span'   => array( 'class' => true, 'style' => true ),
+    );
+}
+
+/**
+ * Väljastab lao valikukasti (escape'itud).
+ */
+function merit_aktiva_the_location_select( $name, $value, $empty_label, $id = '' ) {
+    echo wp_kses( merit_aktiva_location_select_html( $name, $value, $empty_label, $id ), merit_aktiva_locations_allowed_html() );
+}
+
+/**
+ * Väljastab "Lae laod Meritist" nupu. Nupu skript lisatakse lehe jalusesse üks kord.
+ */
+function merit_aktiva_the_locations_loader() {
+    echo '<button type="button" class="button button-secondary merit-load-locations" style="margin-left:8px;">' . esc_html__( 'Lae laod Meritist', 'synchronization-merit-aktiva' ) . '</button>';
+    echo '<span class="merit-locations-status" style="margin-left:8px;color:#666;"></span>';
+    if ( ! has_action( 'admin_footer', 'merit_aktiva_print_locations_script' ) ) {
+        add_action( 'admin_footer', 'merit_aktiva_print_locations_script' );
+    }
+}
+
+/**
+ * Skript, mis laadib laod Meritist ja täidab kõik lehe lao valikud (.merit-location-select).
+ */
+function merit_aktiva_print_locations_script() {
+    $nonce = wp_create_nonce( 'merit_locations_nonce' );
+    ?>
+    <script>
+    jQuery(function($) {
+        $(document).on('click', '.merit-load-locations', function() {
+            var btn = $(this), status = btn.siblings('.merit-locations-status');
+            btn.prop('disabled', true); status.css('color', '#666').text('Laadin...');
+            $.post(ajaxurl, { action: 'merit_get_locations', nonce: <?php echo wp_json_encode( $nonce ); ?> }, function(r) {
+                btn.prop('disabled', false);
+                if (!r.success || !r.data || !r.data.length) {
+                    status.css('color', '#b45309').text((r && typeof r.data === 'string') ? r.data : 'Ladusid ei leitud');
+                    return;
+                }
+                $('.merit-location-select').each(function() {
+                    var sel = $(this), cur = sel.val();
+                    sel.find('option').not('[value=""]').remove();
+                    $.each(r.data, function(i, l) {
+                        sel.append($('<option>').val(l.Code).text(l.Code + (l.Name ? ' — ' + l.Name : '')));
                     });
-                    status.css('color', '#2e7d32').text('✓ ' + r.data.length + ' ladu laaditud — vali ja salvesta');
-                }).fail(function() {
-                    btn.prop('disabled', false);
-                    status.css('color', '#d63638').text('Ühenduse viga');
+                    sel.val(cur);
                 });
+                status.css('color', '#2e7d32').text('✓ ' + r.data.length + ' ladu laaditud — vali ja salvesta');
+            }).fail(function() {
+                btn.prop('disabled', false);
+                status.css('color', '#d63638').text('Ühenduse viga');
             });
         });
-        </script>
-        <?php
-        $html .= ob_get_clean();
-    }
-    return $html;
+    });
+    </script>
+    <?php
 }
 
 // ── Toote väli: Toote andmed → Laoseis ────────────────────────────────────────
@@ -222,14 +243,17 @@ add_action( 'woocommerce_product_options_inventory_product_data', function() {
     global $product_object;
     $value = $product_object ? (string) $product_object->get_meta( MERIT_AKTIVA_LOCATION_META, true ) : '';
     echo '<div class="options_group"><p class="form-field"><label for="merit_location_code">Merit Aktiva ladu</label>';
-    echo merit_aktiva_location_select_html( 'merit_location_code', $value, '— Kategooria / vaikeladu —', 'merit_location_code' );
-    echo merit_aktiva_locations_loader_html();
+    merit_aktiva_the_location_select( 'merit_location_code', $value, '— Kategooria / vaikeladu —', 'merit_location_code' );
+    merit_aktiva_the_locations_loader();
     echo '<span class="description" style="display:block;clear:both;">Ladu, kust selle toote müük Merit Aktivas maha läheb. Tühi = kategooria ladu või plugina vaikeladu.</span>';
     echo '</p></div>';
 } );
 
 add_action( 'woocommerce_admin_process_product_object', function( $product ) {
+    // Nonce (woocommerce_meta_nonce) on kontrollitud WC_Admin_Meta_Boxes::save_meta_boxes() poolt enne seda hooki.
+    // phpcs:ignore WordPress.Security.NonceVerification.Missing
     if ( ! isset( $_POST['merit_location_code'] ) ) return;
+    // phpcs:ignore WordPress.Security.NonceVerification.Missing
     $value = sanitize_text_field( wp_unslash( $_POST['merit_location_code'] ) );
     if ( $value === '' ) {
         $product->delete_meta_data( MERIT_AKTIVA_LOCATION_META );
@@ -241,21 +265,24 @@ add_action( 'woocommerce_admin_process_product_object', function( $product ) {
 // ── Kategooria väli: Tooted → Kategooriad ────────────────────────────────────
 add_action( 'product_cat_add_form_fields', function() {
     echo '<div class="form-field"><label for="merit_location_code">Merit Aktiva ladu</label>';
-    echo merit_aktiva_location_select_html( 'merit_location_code', '', '— Ülemkategooria / vaikeladu —', 'merit_location_code' );
-    echo merit_aktiva_locations_loader_html();
+    merit_aktiva_the_location_select( 'merit_location_code', '', '— Ülemkategooria / vaikeladu —', 'merit_location_code' );
+    merit_aktiva_the_locations_loader();
     echo '<p>Selle kategooria toodete ladu Merit Aktivas, kui tootel endal ladu pole määratud.</p></div>';
 } );
 
 add_action( 'product_cat_edit_form_fields', function( $term ) {
     $value = (string) get_term_meta( $term->term_id, MERIT_AKTIVA_LOCATION_META, true );
     echo '<tr class="form-field"><th scope="row"><label for="merit_location_code">Merit Aktiva ladu</label></th><td>';
-    echo merit_aktiva_location_select_html( 'merit_location_code', $value, '— Ülemkategooria / vaikeladu —', 'merit_location_code' );
-    echo merit_aktiva_locations_loader_html();
+    merit_aktiva_the_location_select( 'merit_location_code', $value, '— Ülemkategooria / vaikeladu —', 'merit_location_code' );
+    merit_aktiva_the_locations_loader();
     echo '<p class="description">Selle kategooria toodete ladu Merit Aktivas, kui tootel endal ladu pole määratud.</p></td></tr>';
 } );
 
 $merit_aktiva_save_cat_location = function( $term_id ) {
+    // Nonce (add-tag / update-tag_<id>) on kontrollitud WordPressi termini salvestamisel enne seda hooki.
+    // phpcs:ignore WordPress.Security.NonceVerification.Missing
     if ( ! isset( $_POST['merit_location_code'] ) || ! current_user_can( 'manage_product_terms' ) ) return;
+    // phpcs:ignore WordPress.Security.NonceVerification.Missing
     $value = sanitize_text_field( wp_unslash( $_POST['merit_location_code'] ) );
     if ( $value === '' ) {
         delete_term_meta( $term_id, MERIT_AKTIVA_LOCATION_META );
