@@ -129,6 +129,12 @@ class Merit_Aktiva_Syncronization {
 		/**
 		 * The class responsible for defining all actions that occur in the admin area.
 		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/merit-aktiva-locations.php';
+
+		/**
+		 * The class responsible for defining all actions that occur in the admin area.
+		 * NB: merit-aktiva-locations.php peab olema laetud enne — klass instantseeritakse faili lõpus.
+		 */
 		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-merit-aktiva-create-invoice.php';
 
 		/**

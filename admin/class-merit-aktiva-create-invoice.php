@@ -32,6 +32,8 @@ class Merit_AktivaAPI_Create_Invoice {
     private $api_secret;
     private $tax_field;
     private $shipping_tax_field;
+    private $default_location;
+    private $item_type;
     private $payment_deadline;
     private $refno_prefix;
     private $invoice_prefix;
@@ -97,6 +99,10 @@ class Merit_AktivaAPI_Create_Invoice {
         $this->tax_field        = get_option('tax_select_field');
         // Transpordi maksutüüp — tühi = sama mis kaupadel
         $this->shipping_tax_field = get_option('shipping_tax_select_field') ?: $this->tax_field;
+        // Ladu: seadistamata = "1" (varasem käitumine), tühi = ladu ei saadeta
+        $this->default_location = merit_aktiva_default_location_code();
+        // Kaubatüüp: 1 = laokaup, 2 = teenus, 3 = mittelaokaup
+        $this->item_type = (int) get_option('merit_item_type', '1') ?: 1;
         $this->payment_deadline = get_option('payment_dead_line');
         $this->refno_prefix           = get_option('refno_prefix_field', '');
         $this->invoice_prefix         = get_option('invoice_prefix_field', '');
@@ -710,6 +716,23 @@ class Merit_AktivaAPI_Create_Invoice {
         return $result;
     }
 
+    /**
+     * Kaubatüüp ja ladu arvereale.
+     * Laokaup (1): LocationCode + Item.DefLocationCode (Merit nõuab mitme lao korral uue kauba loomisel).
+     * Teenus (2) / mittelaokaup (3): ladu ei saadeta.
+     */
+    private function apply_item_type_and_location( array $row ): array {
+        $row['Item']['Type'] = $this->item_type;
+        $location = isset($row['LocationCode']) ? (string) $row['LocationCode'] : '';
+        if ( $this->item_type === 1 && $location !== '' ) {
+            $row['LocationCode']            = $location;
+            $row['Item']['DefLocationCode'] = $location;
+        } else {
+            unset( $row['LocationCode'], $row['Item']['DefLocationCode'] );
+        }
+        return $row;
+    }
+
     private function rows_mismatch_message( $total_net, $diff ) {
         return sprintf(
             'Arveridade summa (%s) ei võrdu tellimuse summaga ilma KM-ita (%s), vahe %s. Mõni tellimuse osa (toode, tasu, transport või allahindlus) ei jõudnud arveridadele.',
@@ -758,7 +781,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 "DiscountPct"    => 0,
                 "DiscountAmount" => 0,
                 "TaxId"          => $this->tax_field,
-                "LocationCode"   => "1",
+                "LocationCode"   => merit_aktiva_resolve_location_code($product),
                 "TaxAmount"      => (float) $item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) {
@@ -785,7 +808,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->shipping_tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => $this->default_location,
                 'TaxAmount'      => (float) $shipping_item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) {
@@ -816,7 +839,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => $this->default_location,
                 'TaxAmount'      => -(float) $order->get_discount_tax(),
             );
             if ( !empty($this->income_account) ) {
@@ -825,7 +848,7 @@ class Merit_AktivaAPI_Create_Invoice {
             $payload_arrays[] = $discount_row;
         }
 
-        return $payload_arrays;
+        return array_map( array($this, 'apply_item_type_and_location'), $payload_arrays );
     }
 
     /**
@@ -995,7 +1018,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => merit_aktiva_resolve_location_code($product),
                 'TaxAmount'      => -(float) $item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
@@ -1016,7 +1039,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->shipping_tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => $this->default_location,
                 'TaxAmount'      => -(float) $shipping_item->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
@@ -1041,13 +1064,13 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => $this->default_location,
                 'TaxAmount'      => (float) $order->get_discount_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;
             $rows[] = $row;
         }
-        return $rows;
+        return array_map( array($this, 'apply_item_type_and_location'), $rows );
     }
 
     /**
@@ -1071,7 +1094,7 @@ class Merit_AktivaAPI_Create_Invoice {
                 'DiscountPct'    => 0,
                 'DiscountAmount' => 0,
                 'TaxId'          => $this->tax_field,
-                'LocationCode'   => '1',
+                'LocationCode'   => $this->default_location,
                 'TaxAmount'      => $sign * (float) $fee->get_total_tax(),
             );
             if ( !empty($this->income_account) ) $row['AccountCode'] = $this->income_account;

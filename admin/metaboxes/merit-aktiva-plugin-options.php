@@ -617,6 +617,12 @@ class Merit_Aktiva_Settings {
         add_settings_field('shipping_tax_select_field', 'Transpordi käibemaksu tüüp', array($this, 'shipping_tax_field_callback'), 'theme_options', 'theme_options_section');
         register_setting('theme_options_group', 'shipping_tax_select_field', array('sanitize_callback' => 'sanitize_text_field', 'default' => ''));
 
+        add_settings_field('merit_location_code', 'Vaikeladu', array($this, 'location_field_callback'), 'theme_options', 'theme_options_section');
+        register_setting('theme_options_group', 'merit_location_code', array('sanitize_callback' => 'sanitize_text_field', 'default' => '1'));
+
+        add_settings_field('merit_item_type', 'Toodete kaubatüüp Meritis', array($this, 'item_type_field_callback'), 'theme_options', 'theme_options_section');
+        register_setting('theme_options_group', 'merit_item_type', array('sanitize_callback' => array($this, 'validate_item_type'), 'default' => '1'));
+
         add_settings_field('payment_status_select_field', 'Arve saatmise tellimuse staatus', array($this, 'payment_status_field_callback'), 'theme_options', 'theme_options_section');
         register_setting('theme_options_group', 'payment_status_select_field', array($this, 'validate_payment_status'));
 
@@ -768,6 +774,36 @@ class Merit_Aktiva_Settings {
         });
         </script>
         <?php
+    }
+
+    public function location_field_callback() {
+        $value = merit_aktiva_default_location_code();
+        echo merit_aktiva_location_select_html('merit_location_code', $value, '— Ladu ei saadeta —', 'merit-location-select');
+        echo merit_aktiva_locations_loader_html();
+        echo '<p class="description">Merit Aktiva ladu, kuhu müük vaikimisi läheb (arverea <code>LocationCode</code>). Vajuta "Lae laod Meritist", vali ladu ja salvesta. '
+           . 'Tootele või tootekategooriale saab määrata eraldi lao: <strong>Tooted → muuda toodet → Laoseis</strong> või <strong>Tooted → Kategooriad</strong>. '
+           . 'Ladu kasutatakse ainult laokauba puhul.</p>';
+    }
+
+    public function item_type_field_callback() {
+        $value = (string) get_option('merit_item_type', '1');
+        $types = array(
+            '1' => 'Laokaup — Merit peab laoseisu (vajab ladu)',
+            '3' => 'Mittelaokaup — laoseisu ei peeta, ladu ei saadeta',
+            '2' => 'Teenus — ladu ei saadeta',
+        );
+        echo '<select name="merit_item_type">';
+        foreach ( $types as $k => $label ) {
+            echo '<option value="' . esc_attr($k) . '" ' . selected($value, $k, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">Mis tüüpi kaubana arveread Meritisse lähevad. Kui sa Merit Aktivas laoseisu ei pea, vali <strong>Mittelaokaup</strong> — siis pole ladu vaja. '
+           . 'Kehtib ka transpordi-, tasu- ja allahindluse ridadele.</p>';
+    }
+
+    public function validate_item_type( $input ) {
+        $value = (string) $input;
+        return in_array($value, array('1', '2', '3'), true) ? $value : '1';
     }
 
     public function payment_status_field_callback() {
@@ -943,7 +979,7 @@ class Merit_Aktiva_Settings {
         }
         $keys = array(
             'apikey_text_field', 'apisecret_text_field', 'payment_dead_line',
-            'tax_select_field', 'shipping_tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
+            'tax_select_field', 'shipping_tax_select_field', 'merit_location_code', 'merit_item_type', 'payment_status_select_field', 'refno_prefix_field',
             'invoice_prefix_field', 'default_unit_field', 'income_account_field',
             'contact_person_field', 'invoice_header_comment_field', 'payment_method_mapping',
         );
@@ -966,7 +1002,7 @@ class Merit_Aktiva_Settings {
         }
         $allowed_keys = array(
             'apikey_text_field', 'apisecret_text_field', 'payment_dead_line',
-            'tax_select_field', 'shipping_tax_select_field', 'payment_status_select_field', 'refno_prefix_field',
+            'tax_select_field', 'shipping_tax_select_field', 'merit_location_code', 'merit_item_type', 'payment_status_select_field', 'refno_prefix_field',
             'invoice_prefix_field', 'default_unit_field', 'income_account_field',
             'contact_person_field', 'invoice_header_comment_field', 'payment_method_mapping',
         );
