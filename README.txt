@@ -4,7 +4,7 @@ Donate link: https://freelancermartin.com/et
 Tags: woocommerce, merit aktiva, invoicing, accounting, estonia
 Requires at least: 6.7
 Tested up to: 7.0
-Stable tag: 1.2.3
+Stable tag: 1.2.4
 Requires PHP: 8.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -87,6 +87,19 @@ Orders are synchronized automatically every 5 minutes. For manual sync:
 * Single order: WooCommerce → Orders → open order → "Send invoice to Merit Aktiva"
 
 == Changelog ==
+
+= 1.2.4 =
+* Fix: add-on prices from product field plugins (e.g. Advanced Product Fields gift card +1 €) now reach Merit — line price is taken from the order line instead of the catalog price
+* Fix: order fees are now sent as invoice rows ("Ridade summa ei võrdu arve summaga" error)
+* Fix: TotalAmount is sent net of VAT and TaxAmount carries the actual VAT
+* Fix: private customers are no longer merged into the first private customer card in Merit — customer is looked up by exact name or created, and the invoice is sent with its CustomerId
+* Fix: extra spaces in customer names no longer create duplicate customers
+* Fix: VAT types can be loaded from Merit (v2/taxes endpoint) and the loaded list is remembered
+* Fix: credit invoices use order line prices and include fees and discounts
+* New: invoice sending stops with a clear message if rows differ from the order total by more than 0.05 €
+* New: separate VAT type setting for shipping rows (SmartPost, Omniva, courier); invoice VAT summary is split by VAT type
+* New: "Ettevõtte nimi" checkout field shown with "Olen ettevõte"; company name and registration code are required when ordering as a company
+* Fix: "Olen ettevõte", registration code and KMKR from the block checkout were not read from the order (wrong meta keys), so company orders were sent to Merit as private persons
 
 = 1.2.3 =
 * Fix: RoundingAmount calculation now includes VAT (TaxAmount) per line so the comparison against the gross WooCommerce order total is correct when prices are stored excluding tax
