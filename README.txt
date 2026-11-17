@@ -99,12 +99,21 @@ Orders are synchronized automatically every 5 minutes. For manual sync:
 * All orders: Merit Aktiva Sync → Settings → "Sync all orders"
 * Single order: WooCommerce → Orders → open order → "Send invoice to Merit Aktiva"
 
+== Screenshots ==
+
+1. Settings: API credentials, VAT type loaded from Merit Aktiva, separate shipping VAT type, default warehouse and item type.
+2. Per-product Merit Aktiva warehouse (Product data → Inventory).
+3. Per-category Merit Aktiva warehouse (Products → Categories).
+4. Company order with company name, registry code and VAT number; order note shows the Merit Aktiva customer the invoice was sent to.
+5. Tools: API connection test, settings export/import and sync history.
+
 == Changelog ==
 
 = 1.2.5 =
 * New: Merit Aktiva warehouse selection — default warehouse in settings (loaded from Merit via getlocations), per-product and per-category warehouse. Fixes "Puudub ladu koodiga 1." when the company has no warehouse with code 1
 * New: item type setting (stock item / non-stock item / service); warehouse is sent only for stock items
 * New: Item.DefLocationCode is sent for stock items (required by Merit when the company has several warehouses)
+* Fix: company fields are no longer shown twice in the admin order view
 
 = 1.2.4 =
 * Fix: add-on prices from product field plugins (e.g. Advanced Product Fields gift card +1 €) now reach Merit — line price is taken from the order line instead of the catalog price

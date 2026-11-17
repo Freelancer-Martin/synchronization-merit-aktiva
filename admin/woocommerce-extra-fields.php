@@ -199,6 +199,14 @@ add_action( 'woocommerce_admin_order_data_after_billing_address', function( $ord
         return;
     }
 
+    // Blocks checkouti väljad (_wc_other/ ja _wc_billing/ eesliitega) kuvab WooCommerce ise —
+    // näitame ainult vanade tellimuste välju, et need ei oleks topelt.
+    foreach ( array( 'is_company', 'company_name', 'registration_number', 'kmkr_number' ) as $field ) {
+        if ( $order->meta_exists( '_wc_other/merit-aktiva/' . $field ) || $order->meta_exists( '_wc_billing/merit-aktiva/' . $field ) ) {
+            return;
+        }
+    }
+
     $is_company   = merit_aktiva_get_order_field( $order, 'is_company' ) === '1';
     $company_name = merit_aktiva_get_order_field( $order, 'company_name' );
     $reg_no       = merit_aktiva_get_order_field( $order, 'registration_number' );
